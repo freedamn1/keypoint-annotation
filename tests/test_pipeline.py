@@ -1,3 +1,4 @@
+import csv
 import json
 from pathlib import Path
 
@@ -36,8 +37,12 @@ def test_build_keeps_missing_points_invisible_and_transforms_crop(tmp_path: Path
         (source / f"IMG_{number:04d}.json").write_text(json.dumps(sample_record(name)), encoding="utf-8")
     output = tmp_path / "pose"
     ear_output = tmp_path / "ear"
-    summary = build(source, output, ear_output=ear_output, roi_width_ratio=0.8, block_size=1, val_fraction=0.33, test_fraction=0.33)
+    summary = build(source, output, ear_output=ear_output, roi_width_ratio=0.8, val_fraction=0.33, test_fraction=0.33)
     assert summary["split_counts"] == {"train": 1, "val": 1, "test": 1}
+    assert summary["group_count"] == 3
+    with (output / "splits.csv").open(newline="", encoding="utf-8") as handle:
+        splits = list(csv.DictReader(handle))
+    assert {row["group"] for row in splits} == {row["image"] for row in splits}
     labels = list(output.glob("labels/*/*.txt"))
     assert len(labels) == 3
     fields = [float(value) for value in labels[0].read_text().split()]

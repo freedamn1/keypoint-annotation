@@ -4,6 +4,15 @@ __pycache__/
 data/
 runs/
 *.pt
+!models/*.pt
 *.onnx
 *.engine
-
+*.jpeg
+*.jpg
+*.png
+*.json
+!models/metadata.json
+*.csv
+*.log
+*.tar.gz
+*.zip

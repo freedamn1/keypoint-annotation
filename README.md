@@ -5,14 +5,14 @@
 ## 1. 数据约定与代码目录
 
 - iPhone17：171 张 5712×4284 图片，每张有 `plant` 和 `ear` 框。109 张有完整 12 点，61 张有 9 点，1 张有 6 点。缺失点在 YOLO pose 标签中写为 `0 0 0`，已有点写为归一化 `x y 2`。
-- 两套数据使用**同一批图片、同一 train/val/test 分组、同一固定裁图**：图像中央 85% 宽度、全部高度。当前 171 张的框和点均位于此范围内。固定裁图避免训练依赖人工框、推理却没有框。
+- 两套数据使用**同一批图片、同一 train/val/test 划分、同一固定裁图**：图像中央 85% 宽度、全部高度。当前 171 张的框和点均位于此范围内。固定裁图避免训练依赖人工框、推理却没有框。
 - 每张源图只标一株，背景里仍有未标注邻株。固定裁图能降低干扰，但效果必须在独立 PM 样本上检验。
 - 推理选取最接近画面中央的 `plant` 实例；`ear` 候选需落在该植株框内，并优先靠近预测的雌穗中部点。若 `ear` 模型没有合适检测，会由雌穗三点估出一个框，同时在终端明确报告。
 - 输出 JSON 的 `imageData=null`，图片和 JSON 必须放在同一目录。12 点标签顺序由 [`pose_pipeline/core.py`](pose_pipeline/core.py) 的 `LABELS` 固定。
 
 ```text
 yolo11_pose_pipeline/
-  build_dataset.py       审计、分组切分、两套 YOLO 数据转换
+  build_dataset.py       审计、逐图随机切分、两套 YOLO 数据转换
   train.py               顺序训练 pose 与 ear 模型，并各自测试
   infer_labelme.py       两模型推理、同株配对、LabelMe 回写
   evaluate.py            点位像素误差及两个框的 IoU
@@ -20,7 +20,7 @@ yolo11_pose_pipeline/
   tests/                 无 GPU 的转换与合并测试
 ```
 
-`data/`、`runs/`、模型权重由 `.gitignore` 排除；代码可推送 GitHub，图像与标注单独上传服务器。
+仓库保留 `models/` 中的两套训练后权重及推理元数据。`data/`、`runs/`、原始图片、标注、推理 JSON 和运行日志均不提交；训练数据需单独保存。
 
 ## 2. 本地转换并打包训练数据
 
@@ -30,15 +30,15 @@ yolo11_pose_pipeline/
 cd 'D:\project\课题组\yolo11_pose_pipeline'
 python -m pytest -q
 python build_dataset.py --source '..\玉米数据0918\iPhone17' --audit-only
-python build_dataset.py --source '..\玉米数据0918\iPhone17' --output 'data\pose' --ear-output 'data\ear'
-tar -czf 'data\training_bundle.tar.gz' -C data pose ear
+python build_dataset.py --source '..\玉米数据0918\iPhone17' --output 'data\image_split\pose' --ear-output 'data\image_split\ear'
+tar -czf 'data\training_bundle_image_split.tar.gz' -C 'data\image_split' pose ear
 ```
 
 `--audit-only` 只是程序检查重复标签、类型、坐标、group_id、裁图覆盖情况并打印数据统计；它不改文件，也不要求再人工逐张审阅。你修正后三张图片后，当前 171 张审计的 `warnings` 已为空。若缺少本地依赖，可运行 `pip install Pillow PyYAML numpy pytest`。`build_dataset.py` 在本地直接生成训练用裁图和标签；两个输出目录必须为空。归档仅包含训练所需的 `data/pose` 与 `data/ear`，不上传原始 LabelMe JSON 及其重复嵌入的 `imageData`。
 
-当前工作区已经执行过上述转换与打包，`data/training_bundle.tar.gz` 约 1.01 GB，两套数据各有 171 张裁图和 171 个标签。**直接上传现成归档即可，不要重复运行构建命令**。只有原始标注或分组策略再次变化时，才重建到新的空目录并重新打包。
+旧的 `data/training_bundle.tar.gz` 使用按编号分组的切分策略。可以按上面命令从原始标注重建，也可以在服务器解压旧包后运行 `resplit_dataset.py`，直接对已生成的裁图和 YOLO 标签重新划分；不需要改动原始标注。不要把旧归档直接当作逐图划分的数据训练。
 
-如果 PowerShell 环境没有 `tar`，也可用 `Compress-Archive -Path 'data\pose','data\ear' -DestinationPath 'data\training_bundle.zip'`，远端改用 `unzip` 解压。归档前可检查 `data/pose/splits.csv`，确认同一株或同一拍摄段没有跨 train/val/test；需要更精确分组时，先提供 `--groups-csv` 重建到新的空目录。
+如果 PowerShell 环境没有 `tar`，也可用 `Compress-Archive -Path 'data\image_split\pose','data\image_split\ear' -DestinationPath 'data\training_bundle_image_split.zip'`，远端改用 `unzip` 解压。可检查 `data/image_split/pose/splits.csv` 确认逐图划分结果；默认不按植株身份约束切分。
 
 在 GitHub 创建空仓库，将占位地址改为自己的仓库后：
 
@@ -56,7 +56,7 @@ git push -u origin main
 
 ## 3. 远端 GPU 环境
 
-建议先用约 24 GB 显存的 NVIDIA GPU，`imgsz=1024, batch=4` 试跑。两套模型顺序训练，不需要同时驻留显存。16 GB 可先试 batch 2。请准备 Linux、Python 3.10/3.11、可用的 NVIDIA 驱动以及足够的数据与检查点磁盘空间。
+建议先用约 24 GB 显存的 NVIDIA GPU，`imgsz=1024, batch=4` 试跑。两套模型顺序训练，不需要同时驻留显存。16 GB 可先试 batch 2。请准备 Linux、Python 3.10–3.12、可用的 NVIDIA 驱动以及足够的数据与检查点磁盘空间。
 
 ```bash
 nvidia-smi
@@ -82,7 +82,7 @@ python -c "import torch, ultralytics; print('cuda:', torch.cuda.is_available(), 
 
 ```powershell
 ssh USER@HOST 'mkdir -p ~/maize-pose/data'
-scp 'D:\project\课题组\yolo11_pose_pipeline\data\training_bundle.tar.gz' USER@HOST:~/maize-pose/data/
+scp 'D:\project\课题组\yolo11_pose_pipeline\data\training_bundle_image_split.tar.gz' USER@HOST:~/maize-pose/data/
 ```
 
 然后在远端仓库运行：
@@ -90,17 +90,27 @@ scp 'D:\project\课题组\yolo11_pose_pipeline\data\training_bundle.tar.gz' USER
 ```bash
 cd ~/maize-pose
 source .venv/bin/activate
-tar -xzf data/training_bundle.tar.gz -C data
+tar -xzf data/training_bundle_image_split.tar.gz -C data
 test -f data/pose/data.yaml
 test -f data/ear/data.yaml
 ```
+
+如果上传的是旧的 `training_bundle.tar.gz`，先解压到临时目录，再用新脚本生成 `data/pose` 和 `data/ear`：
+
+```bash
+mkdir -p data/imported
+tar -xzf data/training_bundle.tar.gz -C data/imported
+python resplit_dataset.py --source data/imported --output data
+```
+
+新输出目录必须为空；脚本会保持 pose 和 ear 的图片划分一致，并把结果写入 `data/pose/splits.csv`。
 
 解压后目录应包含：
 
 - `data/pose`：裁图、41 列 pose 标签、`data.yaml`、`metadata.json`、`splits.csv`。
 - `data/ear`：同样的裁图、5 列 ear 检测标签、`data.yaml`。程序先尝试硬链接 pose 裁图以节省空间，文件系统不支持时复制。
 
-本地转换时默认每 20 个连续图片编号组成一个分组，固定随机种子 42；当前数据约为 train 133、val 18、test 20 张。相邻块仍可能拍到同一株。若知道同株或同一拍摄段，可在本地建立覆盖全部 171 张的 `image,group` CSV，同株使用同一组，然后用 `--groups-csv data/groups.csv` 重建到**新的**输出目录，再打包。示例：
+本地转换时默认逐张图片随机切分，固定随机种子 42；171 张图片按默认 70%/15%/15% 比例约为 train 119、val 26、test 26 张。相邻照片可以进入不同集合，因此源设备上的 val/test 分数可能偏乐观；第 7 节的独立 PM 样本用于检验跨设备效果。LabelMe 的 `group_id` 只负责关联单张图内的框和点，不参与数据切分。若之后需要恢复按编号分块，可传 `--block-size 20`；若有明确的拍摄段分组，可建立覆盖全部图片的 `image,group` CSV，再用 `--groups-csv` 构建到新的空目录。示例：
 
 ```csv
 image,group
@@ -114,7 +124,7 @@ IMG_2867.jpeg,plant-a
 python train.py --pose-data data/pose/data.yaml --ear-data data/ear/data.yaml --task both --imgsz 1024 --batch 4 --epochs 150 --patience 30 --device 0
 ```
 
-默认顺序训练 `yolo11s-pose.pt` 和 `yolo11s.pt`，分别用源设备 test 划分评估。若只需重训其中一个模型，使用 `--task pose` 或 `--task ear`。终端会输出两套实际 `best.pt` 路径；典型位置分别为 `runs/pose/maize-yolo11s-pose/weights/best.pt` 和 `runs/ear/maize-yolo11s-ear/weights/best.pt`，同名实验重跑时 Ultralytics 可能给目录追加编号。显存不足时先减 `--batch`，再考虑降低 `--imgsz`。
+默认顺序训练 `yolo11s-pose.pt` 和 `yolo11s.pt`，分别用源设备 test 划分评估。若只需重训其中一个模型，使用 `--task pose` 或 `--task ear`。终端会输出两套实际 `best.pt` 路径；同名实验重跑时 Ultralytics 可能给目录追加编号。显存不足时先减 `--batch`，再考虑降低 `--imgsz`。
 
 训练入口会在服务器上自动生成 `data.runtime.yaml`，把数据根路径改为解压后的实际绝对路径。因此本地 `data.yaml` 中的 Windows 路径不会影响远端训练；不需要在服务器重新运行 `build_dataset.py`。
 
@@ -122,13 +132,13 @@ python train.py --pose-data data/pose/data.yaml --ear-data data/ear/data.yaml --
 
 ## 6. iPhone17PM 推理与复核
 
-把 PM JPEG 上传到远端 `data/pm/images/`，运行：
+把待推理 JPEG 放入 `data/pm/images/`，运行：
 
 ```bash
-python infer_labelme.py --pose-weights runs/pose/maize-yolo11s-pose/weights/best.pt --ear-weights runs/ear/maize-yolo11s-ear/weights/best.pt --source data/pm/images --metadata data/pose/metadata.json --imgsz 1024 --device 0
+python infer_labelme.py --pose-weights models/pose-best.pt --ear-weights models/ear-best.pt --source data/pm/images --metadata models/metadata.json --imgsz 1024 --device 0
 ```
 
-成功预测的图像旁生成同名 JSON，含 12 点及 `plant`、`ear` 两个框。已有 JSON 默认跳过；明确要替换时才传 `--overwrite`。目前 PM 文件夹中已有 6184–6189 的试标 JSON，因此如果连同 JSON 一起上传，这些图会被跳过；如需看两框新结果，可仅上传 JPEG 到独立推理目录，或备份后使用 `--overwrite`。
+成功预测的图像旁生成同名 JSON，含 12 点及 `plant`、`ear` 两个框。已有 JSON 默认跳过；明确要替换时才传 `--overwrite`。这些模型在部分 iPhone17PM 图片上产生过明显错误的点位；生成 JSON 不代表标注正确，使用前需人工复核。
 
 程序打印低置信度点数、雌穗框是否由关键点估计，以及没有检出中央植株的图名。没有植株检测时不写伪造 JSON，需人工处理或重新推理。下载结果时将 JSON 与同名 JPEG 放在同一目录。LabelMe 中如框遮住点，可先在形状列表里隐藏框，调整点后再显示框。
 
@@ -144,4 +154,4 @@ python evaluate.py --gold data/pm_gold --pred data/pm/images
 
 ## 8. 当前验证范围
 
-本地已对真实 171 张运行只读审计，当前无警告；格式转换、坐标、两套训练标签、服务器路径重定位、合并 JSON 及评估逻辑通过无 GPU 测试。本机没有安装 Ultralytics，也没有远端 GPU，所以尚未实际跑模型训练或推理。远端环境就绪后，先用少量图片试跑并检查两框与 12 点，再处理全部 PM 图片。
+已对真实 171 张运行只读审计，格式转换和合并 JSON 的测试通过。pose 与 ear 模型已分别完成训练，选出的权重保存在 `models/`。iPhone17PM 的批量推理暴露了跨设备泛化问题：部分图片虽然生成完整 JSON，关键点位置仍明显错误。需要人工复核的 PM 样本评估和改进模型，不能直接把批量预测当作可靠标注。

@@ -1,0 +1,18 @@
+{
+  "roi_width_ratio": 0.85,
+  "labels": [
+    "leaf_above_ear_connection_point",
+    "leaf_above_ear_angle_point",
+    "leaf_above_ear_sample_point",
+    "ear_node_point",
+    "ear_middle_point",
+    "ear_top_point",
+    "ear_leaf_connection_point",
+    "ear_leaf_angle_point",
+    "ear_leaf_sample_point",
+    "leaf_below_ear_connection_point",
+    "leaf_below_ear_angle_point",
+    "leaf_below_ear_sample_point"
+  ],
+  "seed": 42
+}

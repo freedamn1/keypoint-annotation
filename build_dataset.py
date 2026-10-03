@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=Path("data/pose"))
     parser.add_argument("--ear-output", type=Path, default=Path("data/ear"))
     parser.add_argument("--roi-width-ratio", type=float, default=0.85)
-    parser.add_argument("--block-size", type=int, default=20, help="adjacent image IDs per split group")
+    parser.add_argument("--block-size", type=int, default=1, help="adjacent image IDs per split group; 1 splits images individually")
     parser.add_argument("--groups-csv", type=Path, help="optional CSV with image,group columns")
     parser.add_argument("--val-fraction", type=float, default=0.15)
     parser.add_argument("--test-fraction", type=float, default=0.15)
@@ -72,7 +72,7 @@ def build(
     output: Path,
     ear_output: Path | None = None,
     roi_width_ratio: float = 0.85,
-    block_size: int = 20,
+    block_size: int = 1,
     groups_csv: Path | None = None,
     val_fraction: float = 0.15,
     test_fraction: float = 0.15,
@@ -95,11 +95,10 @@ def build(
     records = []
     warnings = []
     point_counts = Counter()
-    ids = [image_id(path) for path in json_paths]
-    first_id = min(ids)
+    first_id = min(image_id(path) for path in json_paths) if block_size > 1 and groups_csv is None else None
     group_by_image = {}
 
-    for json_path, numeric_id in zip(json_paths, ids):
+    for json_path in json_paths:
         record = load_labelme(json_path)
         image_path = source / record["imagePath"]
         if image_path.stem != json_path.stem:
@@ -119,7 +118,12 @@ def build(
             point_counts[label] += 1
         if groups_csv is not None and image_path.name not in specified_groups:
             raise ValueError(f"missing image in groups CSV: {image_path.name}")
-        group = specified_groups.get(image_path.name, f"block-{(numeric_id - first_id) // block_size:03d}")
+        if groups_csv is not None:
+            group = specified_groups[image_path.name]
+        elif block_size == 1:
+            group = image_path.name
+        else:
+            group = f"block-{(image_id(json_path) - first_id) // block_size:03d}"
         group_by_image[image_path.name] = group
         records.append((image_path, roi, pose_line, ear_line, group))
 
